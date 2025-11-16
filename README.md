@@ -129,7 +129,6 @@ Step 3 — Add Secret
 
 Under Settings → Secrets:
 
-OPENAI_API_KEY="sk-your-key-here"
 
 
 Deploy 🚀
