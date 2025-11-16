@@ -1,134 +1,187 @@
-AI Video Relevance Scorer
+🎯 AI Video Relevance Scorer
 
-Automatically evaluate how relevant a YouTube video is to a topic using AI embeddings, transcript extraction, and reasoning.
+A Streamlit web application that evaluates how relevant a video’s content is to a given topic using SentenceTransformers and cosine similarity.
 
-This Streamlit application analyzes a video’s transcript (captions or AI-generated transcription) and computes a Relevance Score using semantic similarity. It also highlights the most relevant parts of the video and provides a detailed reasoning report.
+This version is simple, stable, and API-free — no YouTube API, no OpenAI key, no yt-dlp required.
+📌 Just paste the video transcript manually, and the system will analyze relevance!
 
-🚀 Live App
+🚀 Features
+✅ 1. Manual Transcript Input (No API Needed)
 
-👉 https://video-relevance-scorer-6dpjnanyp59d3gc9ae9pa6.streamlit.app/
- 
+YouTube transcripts often fail due to bot checks or location restrictions.
 
-✨ Features
-🎤 Transcript Extraction (3-layer fallback)
+This version accepts manual transcript paste, ensuring 100% reliability.
 
-YouTube Transcript API (preferred)
+✅ 2. AI-Powered Relevance Scoring
 
-OpenAI Whisper (gpt-4o-mini-transcribe)
+Uses sentence embeddings from:
 
-Automatic fallback when captions are unavailable / blocked
+all-MiniLM-L6-v2 (SentenceTransformers)
 
-Uses audio downloaded via yt-dlp
 
-Manual transcript input
+Computes relevance with:
 
-🧠 Semantic Similarity Analysis
+Cosine similarity
 
-Uses SentenceTransformer (all-MiniLM-L6-v2)
+✅ 3. Segment-Level Analysis
 
-Generates embeddings for:
+Breaks transcript into chunks (default: 80 words)
 
-Video title + description
+Computes similarity for each chunk
 
-Transcript segments
+Displays most relevant and least relevant parts
 
-Computes cosine similarity → Relevance Score (0–100%)
+✅ 4. Smart Explanation (Reasoning Engine)
 
-📊 Visual Insights
+You get:
 
-Relevance-over-time bar chart
-
-Top relevant segments
-
-Irrelevant & promotional segments
+Final Verdict (High / Moderate / Low Relevance)
 
 Keyword match analysis
 
-Timeline breakdown
+Top evidence segments
 
-📝 Export Options
+Timeline insights
 
-Download segmented transcript as CSV
+✅ 5. Beautiful Plot
 
-Download full transcript as text
+Interactive bar chart showing relevance over time.
 
-📡 Complete Logging System
+✅ 6. Downloads
 
-Real-time logs visible in the sidebar (debug-friendly)
+Export:
 
-🧩 System Architecture
-YouTube URL
-      │
-      ▼
-Transcript Engine
-      │
-      ├─ YouTube Transcript API (preferred)
-      ├─ yt-dlp → audio.mp3
-      └─ OpenAI Whisper (gpt-4o-mini-transcribe)
-      ▼
-Transcript Segments
-      ▼
-SentenceTransformers Embeddings
-      ▼
-Cosine Similarity
-      ▼
-Relevance Score + Reasoning
-      ▼
-Streamlit UI Output
+Segments CSV
 
-📁 Project Structure
-Video-Relevance-Scorer/
-│
-├── app.py
-├── requirements.txt
-│
-└── .streamlit/
-       └── secrets.toml    (contains your OPENAI_API_KEY)
+Transcript
 
-🛠 Installation (Local)
-1. Clone the Repository
-git clone https://github.com/dhivyajanarthanan7-maker/Video-Relevance-Scorer.git
+🛠️ Tech Stack
+Component	Technology
+Frontend	Streamlit
+Embeddings	SentenceTransformers
+Similarity	scikit-learn cosine similarity
+Plotting	Plotly
+Language	Python
+
+No external API keys. No YouTube API. No OpenAI usage.
+💯 Fully free to run and deploy.
+
+📦 Installation
+1️⃣ Clone Repository
+git clone https://github.com/dhivyajanarthanan7-maker/Video-Relevance-Scorer
 cd Video-Relevance-Scorer
 
-2. Install Dependencies
+2️⃣ Create Virtual Environment
+python -m venv .venv
+source .venv/bin/activate   # Mac/Linux
+.venv\Scripts\activate      # Windows
+
+3️⃣ Install Requirements
 pip install -r requirements.txt
 
-3. Add Your OpenAI API Key
-
-Create folder + secrets file:
-
-mkdir .streamlit
-
-
-Inside .streamlit/secrets.toml:
-
-OPENAI_API_KEY = "sk-your-key-here"
-
-4. Run the App
+4️⃣ Run the App
 streamlit run app.py
 
-☁️ Deploy to Streamlit Cloud
-Step 1 — Push to GitHub
-git add .
-git commit -m "deploy version"
-git push origin main
+🧪 How to Use
+Step 1 — Enter Video Title
 
-Step 2 — Open Streamlit Cloud
+Describe the topic or subject of the video.
 
-https://share.streamlit.io
+Step 2 — (Optional) Add Description
 
-Create new app with:
+Helps improve relevance measurement.
 
-Repo: your GitHub repo
+Step 3 — (Optional) Paste YouTube URL
 
-Branch: main
+Only for visual reference — not used for fetching transcript.
 
-File: app.py
+Step 4 — Paste Transcript
 
-Step 3 — Add Secret
+Get transcript using any method:
 
-Under Settings → Secrets:
+YouTube “Show Transcript” option
 
+Tools like downsub.com
 
+Manual captions
 
-Deploy 🚀
+Step 5 — Click Evaluate
+
+You will get:
+
+🎯 Overall Relevance Score (0–100)
+
+📊 Relevance Over Time chart
+
+🔍 Top relevant segments
+
+⚠ Least relevant segments
+
+🧠 Reasoning & explanation
+
+📂 Project Structure
+├── app.py                 # Main Streamlit app (manual transcript version)
+├── requirements.txt       # Python dependencies
+├── README.md              # Documentation
+└── .streamlit/
+    └── config (if any)
+
+📈 Example Output
+
+Relevance score: 82%
+
+Verdict: Highly Relevant
+
+Top segments highlight where the video strongly matches the topic.
+
+Timeline shows how relevance changes across the video.
+
+❗ Why Manual Transcript Version?
+
+YouTube has:
+
+CAPTCHA blocks
+
+bot detection
+
+region restrictions
+
+transcript not available
+
+API blocked (429 errors)
+
+OpenAI transcription:
+
+Requires API key
+
+Costs money
+
+Hit your quota
+
+Therefore, the manual-transcript version is the most stable and simplest for academic submission.
+
+🏁 Conclusion
+
+This project demonstrates:
+
+Understanding of NLP embeddings
+
+Practical cosine similarity scoring
+
+Streamlit UI development
+
+Full ML pipeline without needing heavy dependencies
+
+Perfect for:
+
+Capstone projects
+
+Portfolio
+
+Resume projects
+
+College showcase
+
+❤️ Author
+
+Dhivya Janarthanan
