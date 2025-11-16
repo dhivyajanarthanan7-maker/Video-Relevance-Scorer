@@ -93,7 +93,7 @@ def extract_video_id(url_or_id: str) -> Optional[str]:
     return url_or_id.strip()
 
 
-def get_youtube_transcript_via_api(video_id_or_url: str, log):
+def get_youtube_transcript_via_api(video_id_or_url: str, log=print):
     """
     Version-safe transcript fetcher:
     - If list_transcripts() exists → use multi-language robust method
@@ -103,7 +103,7 @@ def get_youtube_transcript_via_api(video_id_or_url: str, log):
         log("youtube_transcript_api not available")
         return None, None
 
-    vid = extract_video_id(video_id_or_id)
+    vid = extract_video_id(video_id_or_url)
     if not vid:
         log("Could not extract video ID from URL")
         return None, None
@@ -113,10 +113,9 @@ def get_youtube_transcript_via_api(video_id_or_url: str, log):
         try:
             transcripts = YouTubeTranscriptApi.list_transcripts(vid)
 
-            # try manual then generated
             languages = ["en", "en-US", "en-GB"]
 
-            # 1. Manual transcripts
+            # 1. Try manual subtitles
             for lang in languages:
                 try:
                     tr = transcripts.find_transcript([lang])
@@ -125,7 +124,7 @@ def get_youtube_transcript_via_api(video_id_or_url: str, log):
                 except Exception:
                     pass
 
-            # 2. Auto-generated transcripts
+            # 2. Try auto-generated subtitles
             for lang in languages:
                 try:
                     tr = transcripts.find_generated_transcript([lang])
@@ -138,8 +137,7 @@ def get_youtube_transcript_via_api(video_id_or_url: str, log):
             return None, None
 
         except Exception as e:
-            log(f"list_transcripts() failed: {e}")
-            # fall through to old method
+            log(f"list_transcripts() failed, falling back: {e}")
 
     # ---------- OLD API (get_transcript only) ----------
     try:
@@ -150,23 +148,30 @@ def get_youtube_transcript_via_api(video_id_or_url: str, log):
         return None, None
 
 
-def _segments_from_api(fetched, log):
-    """Helper to convert API raw transcript into (full_text, segments)."""
+def _segments_from_api(fetched, log=print):
+    """Convert transcript API output into (full_text, segments)."""
     if not fetched:
         return None, None
-    segments = [
-        {
-            "start": float(t.get("start", 0.0)),
-            "end": float(t.get("start", 0.0) + t.get("duration", 0.0)),
-            "text": t.get("text", "").strip(),
-        }
-        for t in fetched if t.get("text", "").strip()
-    ]
+
+    segments = []
+    for t in fetched:
+        text = t.get("text", "").strip()
+        if not text:
+            continue
+        start = float(t.get("start", 0.0))
+        duration = float(t.get("duration", 0.0))
+        end = start + duration
+
+        segments.append({
+            "start": start,
+            "end": end,
+            "text": text,
+        })
+
     full_text = " ".join([s["text"] for s in segments])
-    log(f"Fetched {len(segments)} transcript segments.")
+
+    log(f"Fetched {len(segments)} transcript segments via API.")
     return full_text, segments
-
-
 # ---------- Chunking ----------
 def chunk_manual_text(text: str, max_words: int = 50) -> List[Dict]:
     words = text.split()
