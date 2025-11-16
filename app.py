@@ -1,35 +1,27 @@
 """
-video_relevance_app.py
+app.py - AI Video Relevance Scorer (Streamlit)
 
-Streamlit app to score YouTube video relevance to a topic using SentenceTransformers.
-
-- Robust transcript fetching:
-    1) youtube_transcript_api
-    2) fallback: yt_dlp to download automatic captions (.vtt) and parse them
-- Timestamp-aware chunking for YouTube transcripts
-- Manual transcript fallback
-- Friendly errors for missing numpy/torch
-- NEW: human-readable reasoning section explaining the score
+- Uses youtube-transcript-api (primary) + manual transcript (fallback)
+- No yt_dlp (removed for Streamlit Cloud compatibility)
+- Real-time debug logs visible in the UI
+- Lazy model loading via st.cache_resource
 """
 
-import io
 import os
 import re
 import tempfile
-import math
 import traceback
 from typing import List, Dict, Optional, Tuple
 
 import streamlit as st
 import pandas as pd
 import plotly.express as px
- 
+
 # Attempt imports that may fail on misconfigured environments.
-# We'll check and show helpful instructions instead of crashing.
 missing_libs = []
 try:
     from sentence_transformers import SentenceTransformer
-except Exception as e:
+except Exception:
     SentenceTransformer = None
     missing_libs.append("sentence-transformers (and its dependencies like torch)")
 
@@ -47,68 +39,84 @@ except Exception:
     TranscriptsDisabled = NoTranscriptFound = None
     missing_libs.append("youtube-transcript-api")
 
-# yt_dlp is optional (used as a fallback to download .vtt)
-try:
-    import yt_dlp
-except Exception:
-    yt_dlp = None
-
-# numpy is required by torch and transformers — check explicitly
 try:
     import numpy as np  # noqa: F401
 except Exception:
     np = None
     missing_libs.append("numpy")
 
-# -------------------------
-# Helper: friendly runtime checks
-# -------------------------
+
+# ---------- Simple in-app logger (updates live text area) ----------
+def make_logger(container):
+    """Return a logger function that appends messages to session_state['logs']
+       and re-renders the text_area in the provided container."""
+    if "logs" not in st.session_state:
+        st.session_state["logs"] = []
+    def log(msg: str):
+        st.session_state["logs"].append(str(msg))
+        # show last N lines (keeps UI responsive)
+        last = "\n".join(st.session_state["logs"][-200:])
+        container.code(last, language="text")
+    return log
+
+
+# ---------- Helper: friendly runtime checks ----------
 def show_runtime_warnings():
     if missing_libs:
         st.warning(
             "Some Python packages are missing or failed to import: "
             + ", ".join(missing_libs)
-            + ".\nCheck the installation instructions below the app."
+            + ".\nCheck the installation / requirements on your deployment platform."
         )
 
-# -------------------------
-# Lazy model loader (delayed until Evaluate pressed)
-# -------------------------
-@st.cache_resource
+
+# ---------- Model loader ----------
+@st.cache_resource(show_spinner=False)
 def load_embedder(model_name: str = "all-MiniLM-L6-v2"):
     if SentenceTransformer is None:
         raise RuntimeError("sentence-transformers not available.")
-    # SentenceTransformer will import torch/transformers internally.
     return SentenceTransformer(model_name)
 
-# -------------------------
-# Transcript fetchers
-# -------------------------
-def get_youtube_transcript_via_api(video_id_or_url: str) -> Tuple[Optional[str], Optional[List[Dict]]]:
-    """Try youtube_transcript_api list_transcripts -> find -> fetch (robust)."""
+
+# ---------- Transcript fetcher via youtube_transcript_api ----------
+def extract_video_id(url_or_id: str) -> Optional[str]:
+    if not url_or_id:
+        return None
+    if "youtube" in url_or_id or "youtu.be" in url_or_id:
+        from urllib.parse import urlparse, parse_qs
+        parsed = urlparse(url_or_id)
+        vid = parse_qs(parsed.query).get("v", [None])[0]
+        if vid:
+            return vid
+        # fallback for youtu.be short links or /embed/
+        return parsed.path.split("/")[-1] or None
+    return url_or_id.strip()
+
+
+def get_youtube_transcript_via_api(video_id_or_url: str, log) -> Tuple[Optional[str], Optional[List[Dict]]]:
     if YouTubeTranscriptApi is None:
-        print("youtube_transcript_api not available")
+        log("youtube_transcript_api not available")
         return None, None
 
-    # extract id from URL if provided
     vid = extract_video_id(video_id_or_url)
     if not vid:
-        print("Could not extract video id")
+        log("Could not extract video id from URL")
         return None, None
 
     try:
         transcripts = YouTubeTranscriptApi.list_transcripts(vid)
-    except Exception:
-        print("Failed to list transcripts")
+    except Exception as e:
+        log(f"Failed to list transcripts via API: {e}")
         return None, None
 
-    # Try manual transcripts first then generated transcripts (English preferences)
-    for finder in (
+    # Try a sequence of finders (manual then generated)
+    finders = (
         lambda tl: tl.find_transcript(["en", "en-US", "en-GB"]),
         lambda tl: tl.find_transcript(["en"]),
         lambda tl: tl.find_generated_transcript(["en", "en-US", "en-GB"]),
         lambda tl: tl.find_generated_transcript(["en"]),
-    ):
+    )
+    for finder in finders:
         try:
             tr = finder(transcripts)
             if tr:
@@ -121,153 +129,17 @@ def get_youtube_transcript_via_api(video_id_or_url: str) -> Tuple[Optional[str],
                 ]
                 full_text = " ".join([t["text"] for t in fetched if t.get("text", "").strip()])
                 if segments:
+                    log(f"Fetched {len(segments)} transcript segments via youtube_transcript_api")
                     return full_text, segments
-        except Exception:
-            # Continue to next fallback
+        except Exception as e:
+            log(f"Transcript finder failed: {e}")
             continue
-    print("No transcripts found via API") 
+
+    log("No transcripts found via youtube_transcript_api")
     return None, None
 
 
-def get_youtube_transcript_via_yt_dlp(video_id_or_url: str) -> Tuple[Optional[str], Optional[List[Dict]]]:
-    """
-    Fallback: use yt_dlp to download the automatic captions (vtt) into a temp dir,
-    then parse the vtt file into segments (start,end,text).
-    """
-    if yt_dlp is None:
-        print("yt_dlp not available")
-        return None, None
-
-    vid = extract_video_id(video_id_or_url)
-    if not vid:
-        print("Could not extract video id")
-        return None, None
-
-    ydl_opts = {
-        "skip_download": True,
-        # write subtitles and automatic subtitles
-        "writesubtitles": True,
-        "writeautomaticsub": True,
-        "subtitleslangs": ["en", "en-US", "en-GB"],
-        "subtitlesformat": "vtt",
-        # output template to temp dir
-    }
-
-    with tempfile.TemporaryDirectory() as tmpdir:
-        # set outtmpl to tmpdir so subtitle files land there
-        ydl_opts["outtmpl"] = os.path.join(tmpdir, "%(id)s.%(ext)s")
-        try:
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                # download will populate the .vtt file in tmpdir
-                res = ydl.extract_info(f"https://www.youtube.com/watch?v={vid}", download=True)
-        except Exception:
-            print("yt_dlp download failed")
-            return None, None
-
-        # find vtt file in tmpdir for this video id
-        vtt_path = None
-        for fname in os.listdir(tmpdir):
-            if fname.startswith(vid) and fname.endswith(".en.vtt"):
-                vtt_path = os.path.join(tmpdir, fname)
-                break
-            # sometimes language code is omitted or different
-            if fname.startswith(vid) and fname.endswith(".vtt"):
-                vtt_path = os.path.join(tmpdir, fname)
-                break
-
-        if not vtt_path:
-            print("No .vtt file found after yt_dlp download")
-            return None, None
-
-        try:
-            with open(vtt_path, "r", encoding="utf-8") as fh:
-                vtt = fh.read()
-        except Exception:
-            print("Failed to read .vtt file")
-            return None, None
-
-        segments = parse_vtt_to_segments(vtt)
-        full_text = " ".join([s["text"] for s in segments])
-        return full_text, segments
-
-
-def parse_vtt_to_segments(vtt_text: str) -> List[Dict]:
-    """A simple VTT parser: extracts cue start/end and text blocks."""
-    # Remove the WEBVTT header if present
-    vtt_text = vtt_text.strip()
-    # Split into blocks separated by blank lines
-    blocks = re.split(r"\n\s*\n", vtt_text)
-    segments = []
-    time_re = re.compile(r"(\d{1,2}:\d{2}:\d{2}\.\d{3}|\d{1,2}:\d{2}\.\d{3}|\d{1,2}:\d{2}:\d{2}|\d{1,2}:\d{2})\s*-->\s*(\d{1,2}:\d{2}:\d{2}\.\d{3}|\d{1,2}:\d{2}\.\d{3}|\d{1,2}:\d{2}:\d{2}|\d{1,2}:\d{2})")
-    for block in blocks:
-        block = block.strip()
-        if not block:
-            continue
-        lines = block.splitlines()
-        times_line = None
-        text_lines = []
-        for line in lines:
-            if "-->" in line:
-                times_line = line
-            elif re.match(r"^\d+$", line.strip()):
-                # cue index line, skip
-                continue
-            else:
-                text_lines.append(line.strip())
-        if not times_line:
-            continue
-        m = time_re.search(times_line)
-        if not m:
-            continue
-        start_s = vtt_time_to_seconds(m.group(1))
-        end_s = vtt_time_to_seconds(m.group(2))
-        text = " ".join(text_lines).strip()
-        if text:
-            segments.append({"start": float(start_s), "end": float(end_s), "text": text})
-    return segments
-
-
-def vtt_time_to_seconds(t: str) -> float:
-    """Convert VTT/WEBVTT time (HH:MM:SS.mmm or MM:SS.mmm or MM:SS) to seconds."""
-    parts = t.split(":")
-    parts = [p for p in parts]
-    try:
-        if len(parts) == 3:
-            h = int(parts[0])
-            m = int(parts[1])
-            s = float(parts[2])
-        elif len(parts) == 2:
-            h = 0
-            m = int(parts[0])
-            s = float(parts[1])
-        else:
-            return 0.0
-        return h * 3600 + m * 60 + s
-    except Exception:
-        return 0.0
-
-
-def extract_video_id(url_or_id: str) -> Optional[str]:
-    """Return a YouTube video ID from either a URL or a raw id string."""
-    if not url_or_id:
-        return None
-    # if looks like a full URL
-    if "youtube" in url_or_id or "youtu.be" in url_or_id:
-        # try parse query v=
-        from urllib.parse import urlparse, parse_qs
-        parsed = urlparse(url_or_id)
-        vid = parse_qs(parsed.query).get("v", [None])[0]
-        if vid:
-            return vid
-        # fallback for youtu.be short links or /embed/
-        return parsed.path.split("/")[-1] or None
-    # otherwise assume it's an id already
-    return url_or_id.strip()
-
-
-# -------------------------
-# Chunkers
-# -------------------------
+# ---------- Chunking ----------
 def chunk_manual_text(text: str, max_words: int = 50) -> List[Dict]:
     words = text.split()
     if not words:
@@ -277,7 +149,6 @@ def chunk_manual_text(text: str, max_words: int = 50) -> List[Dict]:
 
 
 def chunk_youtube_segments(segments: List[Dict], max_words: int = 80, max_window_seconds: int = 30) -> List[Dict]:
-    """Merge YouTube timestamped segments into larger timestamp-aware chunks."""
     if not segments:
         return []
     chunks = []
@@ -313,9 +184,7 @@ def chunk_youtube_segments(segments: List[Dict], max_words: int = 80, max_window
     return chunks
 
 
-# -------------------------
-# Similarity and scoring
-# -------------------------
+# ---------- Similarity & scoring ----------
 def get_similarity_scores(embedder, title: str, description: str, segments: List[Dict]):
     if not segments:
         return []
@@ -351,9 +220,7 @@ def build_df(segments: List[Dict], sims) -> pd.DataFrame:
     return df
 
 
-# -------------------------
-# New: Reasoning about the score
-# -------------------------
+# ---------- Reasoning engine (kept from your version) ----------
 _DEFAULT_STOPWORDS = {
     "the","and","is","in","to","a","an","for","of","on","with","that","this","it","are","as",
     "by","from","at","be","or","we","you","your","our","they","their","i","my","me","was","but"
@@ -362,7 +229,6 @@ _DEFAULT_STOPWORDS = {
 def extract_keywords(text: str, top_n: int = 10):
     if not text:
         return []
-    # simple tokenization + frequency, filter stopwords and short tokens
     tokens = re.findall(r"[A-Za-z0-9]+", text.lower())
     tokens = [t for t in tokens if t not in _DEFAULT_STOPWORDS and len(t) > 2]
     freq = {}
@@ -371,26 +237,11 @@ def extract_keywords(text: str, top_n: int = 10):
     items = sorted(freq.items(), key=lambda x: x[1], reverse=True)
     return [k for k, _ in items[:top_n]]
 
-# Updated app.py with precise reasoning engine
-# (Full file inserted based on user-provided version with enhanced generate_reasoning_precise)
-
-# NOTE: Due to length constraints, I will only insert the modified reasoning function here.
-# In the next step, I can regenerate the complete file with all integrations.
 
 def generate_reasoning(title: str, description: str, df: pd.DataFrame, sims, score: float) -> str:
-    """
-    Highly precise reasoning algorithm:
-    - Classifies segments
-    - Detects promotional/off-topic parts
-    - Gives keyword overlap analysis
-    - Provides timestamp-based evidence
-    - Generates final verdict + justification
-    """
-
     if df is None or df.empty:
         return "No transcript available to evaluate relevance."
 
-    # thresholds
     HIGH = 0.60
     MID = 0.40
 
@@ -398,49 +249,38 @@ def generate_reasoning(title: str, description: str, df: pd.DataFrame, sims, sco
     avg_sim = df["similarity"].mean()
     std_sim = df["similarity"].std()
 
-    # classify segments
     df["label"] = df["similarity"].apply(
         lambda x: "Highly Relevant" if x >= HIGH else
                   ("Partially Relevant" if x >= MID else "Irrelevant")
     )
 
-    # detect promotional language
     promo_words = ["sponsor", "subscribe", "promo", "discount",
                    "offer", "follow me", "link below", "affiliate"]
     df["is_promo"] = df["text"].str.lower().apply(
         lambda t: any(p in t for p in promo_words)
     )
 
-    # keyword overlap analysis
-    title_desc = (title + " " + description).lower()
+    title_desc = (title + " " + (description or "")).lower()
     td_keywords = extract_keywords(title_desc, top_n=10)
     transcript_text = " ".join(df["text"].tolist()).lower()
     keyword_hits = {k: transcript_text.count(k) for k in td_keywords}
     overlap_score = sum(1 for v in keyword_hits.values() if v > 0) / (len(td_keywords) or 1)
 
-    # timeline analysis
     earliest_rel = df[df["similarity"] >= HIGH].head(1)
 
-    # build reasoning
     parts = []
-
-    # VERDICT
     verdict = (
         "Highly relevant" if score >= 70 else
         "Moderately relevant" if score >= 40 else
         "Low relevance"
     )
     parts.append(f"### 🧠 Final Verdict: **{verdict} ({score}%)**")
-
-    # SUMMARY STATS
     parts.append(
         f"- Total segments analyzed: **{n_segments}**  \n"
         f"- Avg similarity: **{avg_sim:.3f}**, Std: **{std_sim:.3f}**  \n"
         f"- Keyword overlap score: **{overlap_score*100:.1f}%**  \n"
         f"- Promotional segments detected: **{df['is_promo'].sum()}**"
     )
-
-    # EARLY MATCH
     if not earliest_rel.empty:
         row = earliest_rel.iloc[0]
         parts.append(
@@ -449,24 +289,18 @@ def generate_reasoning(title: str, description: str, df: pd.DataFrame, sims, sco
         )
     else:
         parts.append("⚠ No strongly relevant segment detected early in the video.")
-
-    # SEGMENT DISTRIBUTION
     parts.append("### 📊 Segment Classification")
     parts.append(
         f"- Highly Relevant: **{(df['label']=='Highly Relevant').mean()*100:.1f}%**  \n"
         f"- Partially Relevant: **{(df['label']=='Partially Relevant').mean()*100:.1f}%**  \n"
         f"- Irrelevant: **{(df['label']=='Irrelevant').mean()*100:.1f}%**"
     )
-
-    # PROMOTIONAL CONTENT
     if df["is_promo"].sum() > 0:
         parts.append("### 🚨 Promotional Content Detected")
         promo_rows = df[df["is_promo"]].head(3)
         for _, r in promo_rows.iterrows():
             snippet = r["text"][:150].replace("\n", " ")
             parts.append(f"- {int(r['start'])}s → “{snippet}...”")
-
-    # TOP EVIDENCE (Most relevant)
     parts.append("### 🔍 Top Strong Evidence")
     top_evidence = df.sort_values("similarity", ascending=False).head(3)
     for _, r in top_evidence.iterrows():
@@ -474,8 +308,6 @@ def generate_reasoning(title: str, description: str, df: pd.DataFrame, sims, sco
         parts.append(
             f"- **{int(r['start'])}s** (sim {r['similarity']:.2f}): “{snippet}...”"
         )
-
-    # LOW EVIDENCE (Most irrelevant)
     parts.append("### ⚠ Least Relevant Segments")
     low_evidence = df.sort_values("similarity", ascending=True).head(3)
     for _, r in low_evidence.iterrows():
@@ -483,16 +315,12 @@ def generate_reasoning(title: str, description: str, df: pd.DataFrame, sims, sco
         parts.append(
             f"- {int(r['start'])}s (sim {r['similarity']:.2f}): “{snippet}...”"
         )
-
-    # KEYWORD FINDINGS
     parts.append("### 📝 Keyword Matching")
     if len(td_keywords) > 0:
         keyword_info = ", ".join([f"{k}({keyword_hits[k]})" for k in td_keywords])
         parts.append(f"Title/description keywords found in transcript: {keyword_info}")
     else:
         parts.append("No meaningful keywords were extractable from title/description.")
-
-    # FINAL SUMMARY
     parts.append("### 🏁 Summary")
     if score < 40:
         parts.append(
@@ -511,44 +339,51 @@ def generate_reasoning(title: str, description: str, df: pd.DataFrame, sims, sco
         )
 
     return "\n\n".join(parts)
-# -------------------------
-# Main evaluate wrapper
-# -------------------------
-def evaluate_video(title: str, description: str, url: Optional[str], manual_transcript: Optional[str], chunk_size_words: int, chunk_window_seconds: int):
-    # 1) Try youtube_transcript_api
+
+
+# ---------- Evaluate wrapper ----------
+def evaluate_video(title: str, description: str, url: Optional[str], manual_transcript: Optional[str],
+                   chunk_size_words: int, chunk_window_seconds: int, log=None):
     full_text = None
     segments = None
 
     if url:
-        full_text, segments = get_youtube_transcript_via_api(url)
-        if not full_text and not segments:
-            # fallback to yt_dlp
-            full_text, segments = get_youtube_transcript_via_yt_dlp(url)
+        if log:
+            log("Attempting to fetch transcript via youtube_transcript_api...")
+        full_text, segments = get_youtube_transcript_via_api(url, log)
 
     if manual_transcript and manual_transcript.strip():
-        # use manual transcript
+        if log:
+            log("Using manual transcript provided by user.")
         full_text = manual_transcript.strip()
         segments = chunk_manual_text(full_text, max_words=chunk_size_words)
 
     if not segments:
         return 0.0, None, pd.DataFrame(), None, "No transcript available", None
 
-    # chunk timestamped segments into larger windows if needed
-    # If the segments look timestamped (float start/ends), merge them
     if isinstance(segments[0].get("start"), (int, float)):
         merged = chunk_youtube_segments(segments, max_words=chunk_size_words, max_window_seconds=chunk_window_seconds)
         if merged:
             segments = merged
+            if log:
+                log(f"Chunked into {len(segments)} timestamp-aware segments.")
 
-    # load model lazily
     try:
+        if log:
+            log("Loading embedder model...")
         embedder = load_embedder()
+        if log:
+            log("Model loaded.")
     except Exception as e:
         tb = traceback.format_exc()
         return 0.0, None, pd.DataFrame(), full_text, f"Model load failed: {e}\n\n{tb}", None
 
     try:
+        if log:
+            log("Computing embeddings and similarity scores...")
         sims = get_similarity_scores(embedder, title, description, segments)
+        if log:
+            log("Similarity computation done.")
     except Exception as e:
         tb = traceback.format_exc()
         return 0.0, None, pd.DataFrame(), full_text, f"Embedding / similarity error: {e}\n\n{tb}", None
@@ -556,34 +391,33 @@ def evaluate_video(title: str, description: str, url: Optional[str], manual_tran
     score = compute_score_from_sims(sims)
     df = build_df(segments, sims)
 
-    # build plot
     try:
         fig = px.bar(df, x="start", y="similarity", hover_data=["start", "end", "text"], title="Relevance Over Time")
         fig.update_layout(xaxis_title="Segment start (seconds or index)", yaxis_title="Cosine similarity")
     except Exception:
         fig = None
 
-    # generate reasoning string
     reasoning = generate_reasoning(title, description, df, sims, score)
-
     return score, fig, df, full_text, None, reasoning
 
 
-# -------------------------
-# Streamlit UI
-# -------------------------
+# ---------- Streamlit UI ----------
 st.set_page_config(page_title="AI Video Relevance Scorer", layout="wide")
-st.title("🎯 AI Video Relevance Scorer")
-st.write("Evaluate how relevant a YouTube video is to your topic using embeddings (SentenceTransformers).")
+st.title("🎯 AI Video Relevance Scorer (Streamlit)")
 
 show_runtime_warnings()
 
-# Sidebar
+# Sidebar settings
 st.sidebar.header("Settings")
 chunk_size_words = st.sidebar.number_input("Chunk size (words per segment)", min_value=10, max_value=500, value=80, step=10)
 chunk_window_seconds = st.sidebar.number_input("Max window length (seconds) for timestamped chunks", min_value=5, max_value=300, value=30, step=5)
 top_k = st.sidebar.number_input("Top K segments to show", min_value=1, max_value=50, value=5, step=1)
 show_low_similarity = st.sidebar.checkbox("Also show low-similarity segments", value=False)
+
+# Logging panel UI
+log_container = st.sidebar.empty()
+log_container.markdown("**Realtime logs**")
+logger = make_logger(log_container)
 
 with st.form(key="eval_form"):
     title = st.text_input("Video Title")
@@ -593,6 +427,10 @@ with st.form(key="eval_form"):
     submitted = st.form_submit_button("Evaluate")
 
 if submitted:
+    # reset logs for this run
+    st.session_state["logs"] = []
+    logger("Starting evaluation...")
+
     if not title:
         st.error("Please enter a title")
         st.stop()
@@ -600,25 +438,32 @@ if submitted:
         st.error("Please enter a YouTube URL or paste a transcript")
         st.stop()
 
-    with st.spinner("Attempting to fetch transcript and compute relevance..."):
+    # run evaluation (logs will be appended)
+    try:
         score, fig, df, transcript, error_msg, reasoning = evaluate_video(
             title=title,
             description=description,
             url=url.strip() if url else None,
             manual_transcript=manual_transcript.strip(),
             chunk_size_words=int(chunk_size_words),
-            chunk_window_seconds=int(chunk_window_seconds)
+            chunk_window_seconds=int(chunk_window_seconds),
+            log=logger
         )
+    except Exception as e:
+        logger(f"Unhandled error: {e}")
+        st.error(f"Unhandled error during evaluation: {e}")
+        st.stop()
 
     if error_msg:
+        logger(f"Error: {error_msg}")
         st.error(error_msg)
-        # If transcript exists but model failed, show transcript for debug
         if transcript:
             with st.expander("Transcript (fetched)"):
                 st.write(transcript)
         st.stop()
 
     if transcript is None or df.empty:
+        logger("No transcript / empty dataframe after processing.")
         st.error("Could not retrieve or chunk the transcript. Check the URL or paste the transcript manually.")
         st.stop()
 
@@ -628,7 +473,6 @@ if submitted:
     else:
         st.write("No chart available.")
 
-    # show top K segments
     df_sorted = df.sort_values("similarity", ascending=False).reset_index(drop=True)
     top_df = df_sorted.head(int(top_k))
     st.subheader("Top segments")
@@ -645,7 +489,6 @@ if submitted:
     with st.expander("Transcript (full)"):
         st.write(transcript)
 
-    # Reasoning section
     if reasoning:
         st.subheader("Why this score? (Reasoning)")
         st.markdown(reasoning)
@@ -656,5 +499,5 @@ if submitted:
 
     concat_top = "\n\n".join(top_df["text"].tolist())
     st.text_area("Top segments (concatenated)", value=concat_top, height=160)
+    logger("Evaluation finished.")
     st.success("Done ✅")
-
