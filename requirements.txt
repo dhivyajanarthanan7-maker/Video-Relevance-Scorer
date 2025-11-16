@@ -5,10 +5,10 @@ scikit-learn
 sentence-transformers
 torch
 transformers
-youtube-transcript-api>=0.6.2
+youtube-transcript-api==0.6.2
 yt-dlp
 plotly
 pillow
 tqdm
 openai
-ffmpeg-python
+
