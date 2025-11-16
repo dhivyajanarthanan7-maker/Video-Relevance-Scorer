@@ -395,7 +395,7 @@ def evaluate_video(title: str, description: str, url: Optional[str], manual_tran
     if url:
         if log:
             log("Attempting to fetch transcript via youtube_transcript_api...")
-        full_text, segments = get_youtube_transcript_via_api(url, log)
+        full_text, segments = get_youtube_transcript_via_api(url)
 
     if manual_transcript and manual_transcript.strip():
         if log:
