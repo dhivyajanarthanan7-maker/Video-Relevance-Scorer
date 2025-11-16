@@ -93,50 +93,78 @@ def extract_video_id(url_or_id: str) -> Optional[str]:
     return url_or_id.strip()
 
 
-def get_youtube_transcript_via_api(video_id_or_url: str, log) -> Tuple[Optional[str], Optional[List[Dict]]]:
+def get_youtube_transcript_via_api(video_id_or_url: str, log):
+    """
+    Version-safe transcript fetcher:
+    - If list_transcripts() exists → use multi-language robust method
+    - Otherwise → use get_transcript() (older API)
+    """
     if YouTubeTranscriptApi is None:
         log("youtube_transcript_api not available")
         return None, None
 
-    vid = extract_video_id(video_id_or_url)
+    vid = extract_video_id(video_id_or_id)
     if not vid:
-        log("Could not extract video id from URL")
+        log("Could not extract video ID from URL")
         return None, None
 
-    try:
-        transcripts = YouTubeTranscriptApi.list_transcripts(vid)
-    except Exception as e:
-        log(f"Failed to list transcripts via API: {e}")
-        return None, None
-
-    # Try a sequence of finders (manual then generated)
-    finders = (
-        lambda tl: tl.find_transcript(["en", "en-US", "en-GB"]),
-        lambda tl: tl.find_transcript(["en"]),
-        lambda tl: tl.find_generated_transcript(["en", "en-US", "en-GB"]),
-        lambda tl: tl.find_generated_transcript(["en"]),
-    )
-    for finder in finders:
+    # ---------- NEW API (has list_transcripts) ----------
+    if hasattr(YouTubeTranscriptApi, "list_transcripts"):
         try:
-            tr = finder(transcripts)
-            if tr:
-                fetched = tr.fetch()
-                segments = [
-                    {"start": float(t.get("start", 0.0)),
-                     "end": float(t.get("start", 0.0) + t.get("duration", 0.0)),
-                     "text": t.get("text", "").strip()}
-                    for t in fetched if t.get("text", "").strip()
-                ]
-                full_text = " ".join([t["text"] for t in fetched if t.get("text", "").strip()])
-                if segments:
-                    log(f"Fetched {len(segments)} transcript segments via youtube_transcript_api")
-                    return full_text, segments
-        except Exception as e:
-            log(f"Transcript finder failed: {e}")
-            continue
+            transcripts = YouTubeTranscriptApi.list_transcripts(vid)
 
-    log("No transcripts found via youtube_transcript_api")
-    return None, None
+            # try manual then generated
+            languages = ["en", "en-US", "en-GB"]
+
+            # 1. Manual transcripts
+            for lang in languages:
+                try:
+                    tr = transcripts.find_transcript([lang])
+                    fetched = tr.fetch()
+                    return _segments_from_api(fetched, log)
+                except Exception:
+                    pass
+
+            # 2. Auto-generated transcripts
+            for lang in languages:
+                try:
+                    tr = transcripts.find_generated_transcript([lang])
+                    fetched = tr.fetch()
+                    return _segments_from_api(fetched, log)
+                except Exception:
+                    pass
+
+            log("No transcripts found using list_transcripts()")
+            return None, None
+
+        except Exception as e:
+            log(f"list_transcripts() failed: {e}")
+            # fall through to old method
+
+    # ---------- OLD API (get_transcript only) ----------
+    try:
+        fetched = YouTubeTranscriptApi.get_transcript(vid, languages=["en"])
+        return _segments_from_api(fetched, log)
+    except Exception as e:
+        log(f"get_transcript() failed: {e}")
+        return None, None
+
+
+def _segments_from_api(fetched, log):
+    """Helper to convert API raw transcript into (full_text, segments)."""
+    if not fetched:
+        return None, None
+    segments = [
+        {
+            "start": float(t.get("start", 0.0)),
+            "end": float(t.get("start", 0.0) + t.get("duration", 0.0)),
+            "text": t.get("text", "").strip(),
+        }
+        for t in fetched if t.get("text", "").strip()
+    ]
+    full_text = " ".join([s["text"] for s in segments])
+    log(f"Fetched {len(segments)} transcript segments.")
+    return full_text, segments
 
 
 # ---------- Chunking ----------
