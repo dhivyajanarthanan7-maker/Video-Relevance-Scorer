@@ -14,11 +14,13 @@ missing = []
 try:
     from sentence_transformers import SentenceTransformer
 except:
+except:
     SentenceTransformer = None
     missing.append("sentence-transformers")
 
 try:
     from sklearn.metrics.pairwise import cosine_similarity
+except:
 except:
     cosine_similarity = None
     missing.append("scikit-learn")
@@ -26,10 +28,13 @@ except:
 try:
     from youtube_transcript_api import YouTubeTranscriptApi
 except:
+except:
     YouTubeTranscriptApi = None
     missing.append("youtube-transcript-api")
 
 try:
+    import numpy as np
+except:
     import numpy as np
 except:
     np = None
@@ -272,6 +277,8 @@ if go:
         t, d, u, m, log, chunk_words
     )
 
+    if err:
+        st.error(err)
     if err:
         st.error(err)
         st.stop()
