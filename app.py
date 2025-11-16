@@ -94,70 +94,59 @@ def extract_video_id(url_or_id: str) -> Optional[str]:
 
 
 def get_youtube_transcript_via_api(video_id_or_url: str):
-    """
-    Stable transcript fetcher that works on all versions of youtube-transcript-api,
-    including Streamlit Cloud's older cached versions.
-    """
-
     if YouTubeTranscriptApi is None:
-        print("youtube_transcript_api not available")
         return None, None
 
-    # Extract video ID
     vid = extract_video_id(video_id_or_url)
     if not vid:
-        print("Could not extract video ID")
         return None, None
 
     try:
-        print("Attempting list_transcripts()...")
         transcript_list = YouTubeTranscriptApi.list_transcripts(vid)
     except Exception as e:
-        print("list_transcripts() failed:", e)
+        print("Transcript listing failed:", e)
         return None, None
 
-    # Try manual English transcript
+    transcript = None
+
+    # 1) Try manually created transcript (any language)
     try:
-        transcript = transcript_list.find_transcript(['en'])
-        fetched = transcript.fetch()
+        available = [t.language_code for t in transcript_list._manually_created_transcripts]
+        if available:
+            transcript = transcript_list.find_transcript(available)
+    except:
+        transcript = None
 
-        segments = [
-            {
-                "start": float(t.get("start", 0)),
-                "end": float(t.get("start", 0) + t.get("duration", 0)),
-                "text": t.get("text", "").strip()
-            }
-            for t in fetched if t.get("text", "").strip()
-        ]
+    # 2) Try auto-generated transcript (any language)
+    if transcript is None:
+        try:
+            available = [t.language_code for t in transcript_list._generated_transcripts]
+            if available:
+                transcript = transcript_list.find_generated_transcript(available)
+        except:
+            transcript = None
 
-        full_text = " ".join(t["text"] for t in segments)
-        return full_text, segments
+    if transcript is None:
+        print("No transcripts found in any language")
+        return None, None
 
-    except Exception as e:
-        print("Primary transcript fetch failed:", e)
-
-    # Try auto-generated transcript
     try:
-        transcript = transcript_list.find_generated_transcript(['en'])
         fetched = transcript.fetch()
-
-        segments = [
-            {
-                "start": float(t.get("start", 0)),
-                "end": float(t.get("start", 0) + t.get("duration", 0)),
-                "text": t.get("text", "").strip()
-            }
-            for t in fetched if t.get("text", "").strip()
-        ]
-
-        full_text = " ".join(t["text"] for t in segments)
-        return full_text, segments
-
     except Exception as e:
-        print("Generated transcript fetch failed:", e)
+        print("Transcript fetch failed:", e)
+        return None, None
 
-    print("No transcripts found")
-    return None, None
+    segments = [
+        {
+            "start": float(t.get("start", 0)),
+            "end": float(t.get("start", 0) + t.get("duration", 0)),
+            "text": t.get("text", "").strip()
+        }
+        for t in fetched if t.get("text", "").strip()
+    ]
+
+    full_text = " ".join([s["text"] for s in segments])
+    return full_text, segments
 
 
 def _segments_from_api(fetched, log=print):
