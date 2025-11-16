@@ -87,16 +87,19 @@ def load_embedder(model_name: str = "all-MiniLM-L6-v2"):
 def get_youtube_transcript_via_api(video_id_or_url: str) -> Tuple[Optional[str], Optional[List[Dict]]]:
     """Try youtube_transcript_api list_transcripts -> find -> fetch (robust)."""
     if YouTubeTranscriptApi is None:
+        print("youtube_transcript_api not available")
         return None, None
 
     # extract id from URL if provided
     vid = extract_video_id(video_id_or_url)
     if not vid:
+        print("Could not extract video id")
         return None, None
 
     try:
         transcripts = YouTubeTranscriptApi.list_transcripts(vid)
     except Exception:
+        print("Failed to list transcripts")
         return None, None
 
     # Try manual transcripts first then generated transcripts (English preferences)
@@ -122,7 +125,7 @@ def get_youtube_transcript_via_api(video_id_or_url: str) -> Tuple[Optional[str],
         except Exception:
             # Continue to next fallback
             continue
-
+    print("No transcripts found via API") 
     return None, None
 
 
@@ -132,10 +135,12 @@ def get_youtube_transcript_via_yt_dlp(video_id_or_url: str) -> Tuple[Optional[st
     then parse the vtt file into segments (start,end,text).
     """
     if yt_dlp is None:
+        print("yt_dlp not available")
         return None, None
 
     vid = extract_video_id(video_id_or_url)
     if not vid:
+        print("Could not extract video id")
         return None, None
 
     ydl_opts = {
@@ -156,6 +161,7 @@ def get_youtube_transcript_via_yt_dlp(video_id_or_url: str) -> Tuple[Optional[st
                 # download will populate the .vtt file in tmpdir
                 res = ydl.extract_info(f"https://www.youtube.com/watch?v={vid}", download=True)
         except Exception:
+            print("yt_dlp download failed")
             return None, None
 
         # find vtt file in tmpdir for this video id
@@ -170,12 +176,14 @@ def get_youtube_transcript_via_yt_dlp(video_id_or_url: str) -> Tuple[Optional[st
                 break
 
         if not vtt_path:
+            print("No .vtt file found after yt_dlp download")
             return None, None
 
         try:
             with open(vtt_path, "r", encoding="utf-8") as fh:
                 vtt = fh.read()
         except Exception:
+            print("Failed to read .vtt file")
             return None, None
 
         segments = parse_vtt_to_segments(vtt)
