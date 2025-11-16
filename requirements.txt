@@ -10,3 +10,5 @@ yt-dlp
 plotly
 pillow
 tqdm
+openai
+ffmpeg-python
