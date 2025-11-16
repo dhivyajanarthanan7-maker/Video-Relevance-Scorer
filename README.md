@@ -7,7 +7,7 @@ This Streamlit application analyzes a video’s transcript (captions or AI-gener
 🚀 Live App
 
 👉 https://video-relevance-scorer-6dpjnanyp59d3gc9ae9pa6.streamlit.app/
- (replace with your real URL if needed)
+ 
 
 ✨ Features
 🎤 Transcript Extraction (3-layer fallback)
