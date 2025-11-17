@@ -1,186 +1,165 @@
 🎯 AI Video Relevance Scorer
 
-A Streamlit web application that evaluates how relevant a video’s content is to a given topic using SentenceTransformers and cosine similarity.
+Evaluate how relevant a YouTube video is to a given topic using embeddings, transcript extraction, and precise reasoning.
 
-This version is simple, stable, and API-free — no YouTube API, no OpenAI key, no yt-dlp required.
-📌 Just paste the video transcript manually, and the system will analyze relevance!
+This Streamlit app analyzes a YouTube video’s transcript (or a manually provided transcript) and computes how closely it aligns with a provided Title + Description using SentenceTransformer embeddings. It includes:
+
+Automatic transcript fetching (YouTube API, yt-dlp, OpenAI fallback)
+
+Smart transcript chunking
+
+Embedding-based similarity scoring
+
+Relevance visualization over time
+
+Deep reasoning using keyword overlap, promo detection & evidence segments
+
+Downloadable CSV and TXT outputs
 
 🚀 Features
-✅ 1. Manual Transcript Input (No API Needed)
+🔍 Transcript Extraction (Robust Multi-Source Pipeline)
 
-YouTube transcripts often fail due to bot checks or location restrictions.
+The app attempts 3 methods in order:
 
-This version accepts manual transcript paste, ensuring 100% reliability.
+YouTubeTranscriptApi
 
-✅ 2. AI-Powered Relevance Scoring
+yt-dlp subtitles (auto-generated or manual captions)
 
-Uses sentence embeddings from:
+OpenAI transcription fallback (optional)
 
-all-MiniLM-L6-v2 (SentenceTransformers)
+You may also paste a manual transcript directly.
 
+🧩 Chunking Strategy
 
-Computes relevance with:
+The tool supports two chunking modes:
 
-Cosine similarity
+YouTube timestamp-based merging
 
-✅ 3. Segment-Level Analysis
+Configurable: max words & max window duration
 
-Breaks transcript into chunks (default: 80 words)
+Manual text chunking
 
-Computes similarity for each chunk
+Configurable: words per chunk
 
-Displays most relevant and least relevant parts
+🧠 Relevance Scoring
 
-✅ 4. Smart Explanation (Reasoning Engine)
+Uses:
 
-You get:
+SentenceTransformer all-MiniLM-L6-v2 embeddings
 
-Final Verdict (High / Moderate / Low Relevance)
+Cosine similarity per segment
 
-Keyword match analysis
+Segment-wise relevance bar chart
 
-Top evidence segments
+Overall score (%) = mean similarity × 100
 
-Timeline insights
+📌 Precise Reasoning Engine
 
-✅ 5. Beautiful Plot
+Generates an interpretable explanation including:
 
-Interactive bar chart showing relevance over time.
+High/mid/low similarity segment distribution
 
-✅ 6. Downloads
+Keyword overlap analysis
 
-Export:
+Promotional content detection
 
-Segments CSV
+Early strong matches
 
-Transcript
+Off-topic segments
 
-🛠️ Tech Stack
-Component	Technology
-Frontend	Streamlit
-Embeddings	SentenceTransformers
-Similarity	scikit-learn cosine similarity
-Plotting	Plotly
-Language	Python
+Top & bottom evidence segments
 
-No external API keys. No YouTube API. No OpenAI usage.
-💯 Fully free to run and deploy.
+📤 Exporting
 
-📦 Installation
-1️⃣ Clone Repository
-git clone https://github.com/dhivyajanarthanan7-maker/Video-Relevance-Scorer
-cd Video-Relevance-Scorer
+Download segments CSV
 
-2️⃣ Create Virtual Environment
-python -m venv .venv
-source .venv/bin/activate   # Mac/Linux
-.venv\Scripts\activate      # Windows
+Download full transcript TXT
 
-3️⃣ Install Requirements
+View full transcript & segment table
+
+Copy top segments easily
+
+🛠 Installation
+1. Clone the repository
+git clone https://github.com/<your-username>/<repo-name>.git
+cd <repo-name>
+
+2. Create a virtual environment
+python -m venv venv
+source venv/bin/activate   # Linux / Mac
+venv\Scripts\activate      # Windows
+
+3. Install dependencies
 pip install -r requirements.txt
 
-4️⃣ Run the App
+4. (Optional) Add OpenAI API key
+
+Create .env or set environment variable:
+
+export OPENAI_API_KEY="your_key_here"
+
+
+Windows:
+
+set OPENAI_API_KEY=your_key_here
+
+▶️ Running the App
 streamlit run app.py
 
-🧪 How to Use
-Step 1 — Enter Video Title
 
-Describe the topic or subject of the video.
+Open your browser at:
 
-Step 2 — (Optional) Add Description
+http://localhost:8501
 
-Helps improve relevance measurement.
+📦 Requirements List (recommended for requirements.txt)
+streamlit
+pandas
+numpy
+plotly
+sentence-transformers
+scikit-learn
+youtube-transcript-api
+yt-dlp
+openai
 
-Step 3 — (Optional) Paste YouTube URL
 
-Only for visual reference — not used for fetching transcript.
+(OpenAI is optional — only if you want fallback transcription.)
 
-Step 4 — Paste Transcript
+🗂 Project Structure
+├── app.py
+├── README.md
+├── requirements.txt
+└── assets/ (optional)
 
-Get transcript using any method:
+🧧 Environment Variables
+Name	Purpose
+OPENAI_API_KEY	Enables OpenAI fallback transcription
+🔒 Notes & Limitations
 
-YouTube “Show Transcript” option
+Auto-captions may be noisy; manual transcript gives best results.
 
-Tools like downsub.com
+Similarity score depends on text semantics, not keyword matching.
 
-Manual captions
+OpenAI fallback costs API credits; disabled if key is missing.
 
-Step 5 — Click Evaluate
+✨ Future Improvements
 
-You will get:
+Support for multilingual transcripts
 
-🎯 Overall Relevance Score (0–100)
+Support for local video file upload
 
-📊 Relevance Over Time chart
+Support for alternative embedding models
 
-🔍 Top relevant segments
+API endpoint for programmatic scoring
 
-⚠ Least relevant segments
+🤝 Contributing
 
-🧠 Reasoning & explanation
+Pull requests are welcome!
+Feel free to open issues/ideas for improvements.
 
-📂 Project Structure
-├── app.py                 # Main Streamlit app (manual transcript version)
-├── requirements.txt       # Python dependencies
-├── README.md              # Documentation
-└── .streamlit/
-    └── config (if any)
+📜 License
 
-📈 Example Output
-
-Relevance score: 82%
-
-Verdict: Highly Relevant
-
-Top segments highlight where the video strongly matches the topic.
-
-Timeline shows how relevance changes across the video.
-
-❗ Why Manual Transcript Version?
-
-YouTube has:
-
-CAPTCHA blocks
-
-bot detection
-
-region restrictions
-
-transcript not available
-
-API blocked (429 errors)
-
-OpenAI transcription:
-
-Requires API key
-
-Costs money
-
-Hit your quota
-
-Therefore, the manual-transcript version is the most stable and simplest for academic submission.
-
-🏁 Conclusion
-
-This project demonstrates:
-
-Understanding of NLP embeddings
-
-Practical cosine similarity scoring
-
-Streamlit UI development
-
-Full ML pipeline without needing heavy dependencies
-
-Perfect for:
-
-Capstone projects
-
-Portfolio
-
-Resume projects
-
-College showcase
+This project is licensed under the MIT License – free to use, modify, and distribute.
 
 ❤️ Author
 
