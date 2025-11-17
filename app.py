@@ -527,7 +527,7 @@ with st.form(key="eval_form"):
     title = st.text_input("Video Title")
     description = st.text_input("Video Description (optional)")
     url = st.text_input("YouTube URL (optional)")
-    manual_transcript = st.text_area("OR Paste Transcript Manually (optional)", height=160)
+    manual_transcript = st.text_area("OR Paste Transcript Manually (Mandatory)", height=160)
     submitted = st.form_submit_button("Evaluate")
 
 # Keep df local to the evaluation branch — avoids NameError
